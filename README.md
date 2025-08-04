@@ -8,11 +8,13 @@ The objective is to explore socio-spatial structures and inequalities in San Fra
 
 ```
 ├── spatial_analysis_sf.Rmd # Complete R Markdown script (analysis and maps)
-├── data/ # Input data files
+├── data/ # Raw input data files
 │ ├── cultural_district.geojson
 │ ├── sfnh.geojson
 │ ├── sfnh_dem.csv
 │ └── sfbiz_by_type.csv
+├── processed-data/ # Cleaned and aggregated data
+│ └── agg_bizz.geojson
 ├── figures/ # Maps exported from the analysis
 │ ├── map_racial_typology.png
 │ └── sf_business_maps.png
@@ -54,6 +56,7 @@ All relevant files are included in the `/data` folder:
 - `sfnh_dem.csv`
 - `sfbiz_by_type.csv`
 
+The file agg_bizz.geojson (in processed-data/) was generated during the data wrangling phase and used in the economic activity mapping section. It aggregates business points by category and spatial unit.
 
 ## Reproducibility
 
