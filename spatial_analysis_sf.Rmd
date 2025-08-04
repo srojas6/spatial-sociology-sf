@@ -1,0 +1,395 @@
+---
+title: "Spatial Data and Mapping Exam"
+author: "ROJAS Sergio"
+date: "09-01-2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(here)
+library(tibble)
+library(tidyr)
+library(knitr)
+```
+
+## Spatial Data and Mapping
+
+### Examine demographic patterns in San Francisco by creating a typology map
+
+1. [code] Import San Francisco neighborhood boundaries and neighborhood-level
+demographic attributes data.
+
+```{r import_data, echo=TRUE}
+# Import polygons
+sfnh <- st_read("data/sfnh.geojson", quiet = TRUE) # for San Francisco “Analysis Neighborhood" boundaries
+cult_dist <- st_read("data/cultural_district.geojson", quiet = TRUE) # Designated cultural districts in San Francisco
+
+# Import attributes
+sfdem <- read.csv("data/sfnh_dem.csv") # Neighborhood-level demographic attributes
+sfbiz <- read.csv("data/sfbiz_by_type.csv") # Retail businesses by type in San Francisco
+```
+
+
+2. [code] Join attributes to neighborhood boundaries.
+
+```{r}
+# Join attributes to geometry
+sf_joined <- merge(
+  x = sfnh,            # sf object; the returned object will be of the same type as x.
+  y = sfdem,           # data frame
+  by.x = "nhood",      # x identifier
+  by.y = "nhood",      # y identifier
+  all.x = TRUE         # keep all lines
+)
+
+# Validate geometries
+sf_joined <- st_make_valid(sf_joined)
+```
+
+3. [code] Using the “pwhite” (the share of white residents) variable, create a neighborhood
+racial typology with three neighborhood categories according to the following definition:
+a. White: The share of white residents is above 70%
+b. Mixed: The share of white residents is above 30% and below or equal to 70%
+c. Minority: The share of white residents is below or equal to 30%
+
+
+```{r}
+# Create neighborhood racial typology
+sf_joined <- sf_joined %>%
+  mutate(
+    nh_rt = case_when(
+      pwhite > 70 ~ "White",
+      pwhite > 30 & pwhite <= 70 ~ "Mixed",
+      pwhite <= 30 ~ "Minority",
+      TRUE ~ NA  # Default case
+    )
+  )
+```
+
+4. [code] Create a typology map displaying this variable.
+
+```{r}
+# Map 1: Neighborhoods by race
+map_racial_typology <- ggplot(data = sf_joined) +
+  geom_sf(aes(fill = nh_rt), 
+          color = "white") +
+  scale_fill_manual(values = c("White" = "#BCEE68", "Mixed" = "#87CEFA", "Minority" = "#F08080")) +  
+  theme_minimal() +
+  theme_void() +
+  labs(
+    title = "Neighborhood Racial Typology",
+    fill = "Racial Composition"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+# Print the maps
+print(map_racial_typology)
+
+ggsave(
+  filename = "map_racial_typology.png",  
+  plot = map_racial_typology,           
+  width = 8,                            
+  height = 6,                           
+  dpi = 300                             
+)
+
+```
+
+### Explore economic activities in San Francisco.
+
+1. [code] Convert the business data to a spatial object with geometries.
+
+```{r}
+# Transform lat/long data into sf oject
+sf_sfbiz <- st_as_sf(sfbiz, 
+                     coords = c("longitude", "latitude"), 
+                     crs = 4326 # specify the projection
+                     )
+
+# Check the data
+head(sf_sfbiz, 3)
+```
+
+2. [code] Create a point map using symbology
+a. Based on the “biz_type” variable, create a new variable classifying “art” (art
+dealers) and “coffee shop” as “discretionary” businesses and “grocery” and
+“barber” as “essential” businesses.
+b. Visualize how discretionary vs. essential businesses are distributed in San
+Francisco using symbols.
+
+```{r}
+# Create a new classification variable
+sf_sfbiz <- sf_sfbiz %>%
+  mutate(
+    biz_class = case_when(
+      biz_type %in% c("art", "coffee") ~ "Discretionary",  # Discretionary businesses
+      biz_type %in% c("grocery", "barber") ~ "Essential",       # Essential businesses
+      TRUE ~ NA                                             # Default category
+    )
+  )
+
+sf_sfbiz$biz_class <- factor(sf_sfbiz$biz_class, levels = c("Essential", "Discretionary"))
+```
+
+```{r}
+class_map <- ggplot() +
+  # display neighborhood boundaries as a layer
+  geom_sf(data = sfnh,
+          fill = "lightgray",
+          size = 0.02,
+          color = "white"
+          ) +
+  # add businesses as another layer
+  geom_sf(data = sf_sfbiz,
+          aes(color = biz_class,
+              shape = biz_class,
+              size = biz_class), 
+          alpha = 0.8) +
+  scale_color_manual(values = c("Essential" = "darkblue", "Discretionary" = "orange")) +     
+  scale_shape_manual(values = c("Essential" = 16,  
+                                "Discretionary" = 17),  
+                     labels = c("Essential" = "Essential (grocery and barber)",
+                       "Discretionary" = "Discretionary (art dealers and coffee shop)")) +          
+  scale_size_manual(values = c("Essential" = 1.5, "Discretionary" = 2)) + 
+  guides(color = "none",
+         size = "none",
+         shape = guide_legend(override.aes = list(
+           color = c("darkblue", "orange"), 
+           size = c(1.5, 2), 
+           shape = c(16, 17)
+           ))) +
+  theme_void() +
+  labs(title = "Distribution of Business in San Francisco",
+       shape = "Class of Business")
+
+class_map
+```
+
+3. [code] Perform spatial join and aggregate the number of businesses at the neighborhood
+level.
+
+
+```{r}
+# Before joining, check if they have the same projections
+st_crs(sfnh) == st_crs(sf_joined)
+```
+
+```{r}
+# Perform spatial join
+nh_joined <- st_join(x = sfnh, # join
+                     y = sf_sfbiz, # target
+                     join = st_contains, # does x(polygon) contains y(point)?
+                     left = TRUE) # keep all neighborhoods
+
+```
+
+```{r}
+# Count businesses
+biz_counts <- nh_joined %>%
+  st_drop_geometry() %>%
+  group_by(nhood) %>% 
+  summarise(n_biz = sum(!is.na(company))) # don't count NA as 1
+
+head(biz_counts, 10)
+```
+
+```{r}
+# Join the businesses count to neighborhood boundaries
+biz_colors <- sfnh %>%
+  left_join(biz_counts,
+            by = "nhood")
+
+head(biz_colors, 3)
+```
+
+
+```{r}
+hist(biz_colors$n_biz)
+st_write(biz_colors, "processed-data/agg_bizz.geojson", driver = "GeoJSON", delete_dsn = TRUE)
+```
+
+4. [code] Create a proportional symbol map, visualizing the distributions of businesses in
+San Francisco.
+
+```{r}
+# Create neighborhood centroids
+nh_cent <- st_centroid(sfnh)
+
+# Check centroids
+print(nh_cent)
+```
+
+```{r}
+# Join the restaurant counts to neighborhood centroids
+biz_symbols <- nh_cent %>%
+  left_join(biz_counts, by = "nhood") %>%
+  arrange(desc(n_biz)) # sort to ensure small points would be plotted in front of big points
+
+head(biz_symbols, 3)
+```
+
+
+```{r}
+# Create the proportional symbol map
+prop_map <- ggplot() +
+  geom_sf(data = sfnh,           # add a base map layer of boundaries
+          fill = "lightgray",
+          size = 0.02,
+          color = "white"
+          ) +
+  geom_sf(data = biz_symbols,
+          aes(size = n_biz),      # add a layer of symbols sized based on the business counts 
+          shape = 21,             # specify a circle shape for symbols
+          fill = "darkgreen",           # set a color to fill the shape 
+          alpha = 0.6,            # set a level of transparency
+          color = "lightgray") +  # set a color for edges of the shape
+  scale_size(range = c(3, 13)) +  # set min and max for the size of the symbols
+  theme_void() +
+  labs(size = "Business Count",
+       title = "Proportional Symbol Map of Business in San Francisco") 
+
+prop_map
+```
+
+5. [code] Combine the symbology map and the proportional symbol map into one figure and
+save.
+
+```{r}
+# Combine maps
+combined <- ggpubr::ggarrange(class_map, prop_map, ncol=2)
+
+ggsave(
+  filename = "sf_business_maps.png", plot = combined, 
+  width = 12, height = 7,
+  dpi = 300 # resolution
+)
+```
+
+### Investigate cultural districts in San Francisco.
+
+1. [code] Calculate distances between each neighborhood and cultural district and identify
+the nearest neighbor.
+
+```{r}
+# Check the boundaries
+ggplot() +
+  geom_sf(data = sfnh, fill = NA, color = "black", size = 0.2) + 
+  geom_sf(data = cult_dist, 
+          aes(fill = district_name),
+          color = "white", size = 0.02) +    
+  theme_void() +
+  labs(title = "Cultural Districts in San Francisco")
+```
+
+```{r}
+# Find out if neighborhoods intersect with any BIDs
+intersections <- st_intersects(biz_colors, cult_dist)
+print(intersections)
+```
+
+
+```{r}
+# Create a new binary variable indicating whether a neighborhood intersects with any BIDs
+biz_colors$intersects_cbd <- sapply(intersections, 
+                                    function(x) ifelse(length(x) > 0, 1, 0))
+
+head(biz_colors, 3)
+```
+
+```{r}
+# Create centroids for both neighborhood polygons and community benefit district polygons
+nh_centroids <- st_centroid(sfnh)
+bids_centroids <- st_centroid(cult_dist)
+```
+
+```{r}
+# Compute pairwise distances (matrix form)
+distances <- st_distance(nh_centroids, bids_centroids)
+
+# Convert to a data frame for easier manipulation
+distance_df <- as.data.frame(as.matrix(distances))
+
+head(distance_df, 3)
+```
+
+```{r}
+# Add meaningful column and row names
+colnames(distance_df) <- cult_dist$district_name 
+rownames(distance_df) <- sfnh$nhood
+
+head(distance_df, 3)
+```
+
+```{r}
+# Reshape to a long-format for analysis
+distance_long <- distance_df %>%
+  rownames_to_column("Neighborhood") %>% # convert row names into a new column
+  pivot_longer(
+    cols = -Neighborhood,          # pivot all columns except "Neighborhood"
+    names_to = "Cultural District",              # names of the  column will become values in "Cultural District"
+    values_to = "Distance"         # values will go into "Distance" column
+  )
+
+head(distance_long, 10)
+```
+
+```{r}
+# Identify nearest distance neighbor
+nearest_neigh <- distance_long %>%
+  group_by(Neighborhood) %>%
+  slice_min(order_by = Distance)
+
+head(nearest_neigh, 10)
+```
+2. [code] For Bayview Hunters Point, Outer Richmond, Potrero Hill, and Castro/Upper
+Market neighborhoods, create a table consisting of the name of the nearest cultural
+district, the distance, and the share of each racial group.
+
+```{r}
+# Join the distance data to the existing neighborhood-level spatial data
+biz_colors <- biz_colors %>%
+  left_join(nearest_neigh, 
+            by = c("nhood" = "Neighborhood"))
+
+# Alternatively, you can directly add the distance variable using apply function
+biz_colors$min_distance_to_cult <- apply(distances, # use distances matrix
+                                        1,   # apply to rows
+                                        min) # get minimum
+
+head(biz_colors, 3)
+
+```
+
+
+```{r}
+
+biz_colors_wo_geo <- st_drop_geometry(biz_colors)
+sf_joined_wo_geo <- st_drop_geometry(sf_joined)
+biz_sf_joined <- left_join(biz_colors_wo_geo, sf_joined_wo_geo, by = "nhood")
+
+```
+
+```{r}
+table <- biz_sf_joined %>% 
+  filter(nhood == "Bayview Hunters Point" | nhood == "Outer Richmond" | 
+        nhood == "Potrero Hill"  | nhood == "Castro/Upper Market") %>% 
+  select(nhood, `Cultural District`, min_distance_to_cult:phisp) 
+
+```
+
+```{r}
+table %>%
+  knitr::kable(format = "markdown", 
+               col.names = c("Neighborhood", "Cultural District", "Distance to Cultural District",
+                             "White Population Proportion", 
+                             "Black Population Proportion",
+                             "Asian Population Proportion",
+                             "Hispanic Population Proportion"))
+```
+
